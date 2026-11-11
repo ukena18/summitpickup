@@ -28,3 +28,12 @@ In Organizer tools > Manage scheduled games, click **Manage players** under a ga
 ## Dark theme and mobile roster update
 
 The interface now uses a midnight-blue dark theme across its calendar, game details, organizer tools, forms, and dialogs. Opening **Player roster** on a game displays individually styled confirmed-player entries and the ordered waitlist. Layouts adapt down to narrow mobile widths. This is a presentation update: it does not modify the Netlify Blobs storage format or overwrite existing game/player records.
+
+
+## Admin archive & attendance (new)
+
+- Games remain publicly visible until **24 hours after scheduled end**, using the America/Denver time zone, then disappear from public upcoming games.
+- The protected **Admin** dashboard keeps all past games under **Game archive & attendance** without deleting existing Netlify Blobs data.
+- Click **View attendance & players** and check **Attended** beside each confirmed player to record actual turnout. Counts update and persist in Blobs across redeployments.
+- Admin login wording is now **Admin → Password → Log in**. The password still comes from the existing `SOCCER_ADMIN_SECRET` Netlify environment variable.
+- This does not migrate data from a different Netlify site; deploy to the same site to retain records. Netlify Blobs is not a transactional database and simultaneous booking requests can race.

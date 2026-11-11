@@ -241,3 +241,40 @@ test("organizer can edit and remove a player while keeping device authentication
   assert.equal(res.players.filter(p=>p.status==="confirmed").length,2);
   assert.equal((await call({action:"adminRemovePlayer",sessionId,adminSecret,playerId:players[0].playerId})).status,404);
 });
+
+test('past games archive 24 hours after end in Denver, remain in admin history, and track attendance', async (t) => {
+  const original=process.env.SOCCER_ADMIN_SECRET;
+  process.env.SOCCER_ADMIN_SECRET='test-admin-password';
+  t.after(()=>{if(original===undefined)delete process.env.SOCCER_ADMIN_SECRET;else process.env.SOCCER_ADMIN_SECRET=original;});
+  const records=new Map();
+  let clock=Date.parse('2026-11-11T23:00:00Z');
+  const handler=createAPI({
+    now:()=>clock,
+    read:async(k,f)=>structuredClone(records.get(k)??f),
+    save:async(k,v)=>records.set(k,structuredClone(v)),
+    all:async prefix=>[...records].filter(([k])=>k.startsWith(prefix)).map(([,v])=>structuredClone(v))
+  });
+  const request=async body=>{const r=await handler({httpMethod:'POST',body:JSON.stringify(body)});return {status:r.statusCode,...JSON.parse(r.body)}};
+  const adminSecret=process.env.SOCCER_ADMIN_SECRET;
+  assert.equal((await request({action:'create',adminSecret,date:'2026-11-11',start:'18:00',end:'20:00',location:'Frisco Gym',capacity:15})).ok,true);
+  const publicBefore=await request({action:'list'});
+  const id=publicBefore.sessions[0].id;
+  const player={playerId:randomUUID(),playerSecret:randomUUID(),name:'Attendance Test'};
+  assert.equal((await request({action:'register',sessionId:id,...player})).status,'confirmed');
+  assert.equal((await request({action:'adminList',adminSecret:'wrong'})).status,403);
+  assert.equal((await request({action:'adminAttendance',adminSecret:'wrong',sessionId:id,playerId:player.playerId,attended:true})).status,403);
+  assert.equal((await request({action:'adminAttendance',adminSecret,sessionId:id,playerId:player.playerId,attended:true})).ok,true);
+  assert.equal((await request({action:'adminList',adminSecret})).sessions[0].attendedCount,1);
+  // In November Frisco is MST: 20:00 Wed -> 03:00 UTC Thursday; archive at 03:00 UTC Friday.
+  clock=Date.parse('2026-11-13T02:59:59Z');
+  assert.equal((await request({action:'list'})).sessions.length,1);
+  clock=Date.parse('2026-11-13T03:00:00Z');
+  assert.equal((await request({action:'list'})).sessions.length,0);
+  const archive=(await request({action:'adminList',adminSecret})).sessions;
+  assert.equal(archive.length,1);
+  assert.equal(archive[0].archived,true);
+  assert.equal(archive[0].attendedCount,1);
+  assert.equal((await request({action:'adminRoster',adminSecret,sessionId:id})).players[0].attended,true);
+  assert.equal((await request({action:'adminAttendance',adminSecret,sessionId:id,playerId:player.playerId,attended:false})).ok,true);
+  assert.equal((await request({action:'adminList',adminSecret})).sessions[0].attendedCount,0);
+});

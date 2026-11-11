@@ -18,7 +18,29 @@ const clean = (s) =>
 export const organizerAuthorized = (body) =>
   !!process.env.SOCCER_ADMIN_SECRET &&
   eq(body.adminSecret || "", process.env.SOCCER_ADMIN_SECRET);
-export function createAPI({ read, save, all }) {
+// Convert the game end time in Frisco (America/Denver) to UTC, accounting for DST.
+export function gameEndTimestamp(session) {
+  const local = `${session.date}T${session.end}:00`;
+  const [date, clock] = local.split("T");
+  const [y, mo, d] = date.split("-").map(Number);
+  const [h, mi] = clock.split(":").map(Number);
+  const localUTC = Date.UTC(y, mo - 1, d, h, mi);
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Denver", year: "numeric", month: "2-digit",
+    day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23"
+  });
+  let guess = localUTC + 7 * 3600000;
+  for (let n = 0; n < 3; n++) {
+    const parts = Object.fromEntries(formatter.formatToParts(new Date(guess)).map(p => [p.type, p.value]));
+    const actualLocal = Date.UTC(+parts.year, +parts.month - 1, +parts.day, +parts.hour, +parts.minute);
+    guess += localUTC - actualLocal;
+  }
+  return guess;
+}
+export const isArchived = (session, nowMs = Date.now()) =>
+  nowMs >= gameEndTimestamp(session) + 24 * 60 * 60 * 1000;
+
+export function createAPI({ read, save, all, now = () => Date.now() }) {
   const recordEvent = async (action, who, detail) =>
     save("audit/" + Date.now() + "-" + randomUUID(), {
       action,
@@ -62,42 +84,37 @@ export function createAPI({ read, save, all }) {
       if (action === "login") {
         return adminOK(body)
           ? json({ ok: true })
-          : json({ error: "Incorrect organizer secret key." }, 403);
+          : json({ error: "Incorrect admin password." }, 403);
       }
-      if (action === "list") {
+      if (action === "list" || action === "adminList") {
+        if (action === "adminList" && !adminOK(body))
+          return json({ error: "Incorrect admin password." }, 403);
+        const admin = action === "adminList";
         const sessions = (await all("sessions/"))
-          .filter(
-            (s) =>
-              s.status !== "deleted" &&
-              new Date(s.date + "T23:59:59") >= new Date(),
-          )
+          .filter(s => s.status !== "deleted" && (admin || !isArchived(s, now())))
           .sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start));
         const output = [];
         for (const s of sessions) {
           const regs = await roster(s.id);
-          const mine = regs.find(
-            (r) =>
-              r.playerId === body.playerId &&
-              eq(r.secretHash, hash(body.playerSecret || "")),
-          );
+          const mine = regs.find(r =>
+            r.playerId === body.playerId && eq(r.secretHash, hash(body.playerSecret || "")));
+          const confirmed = regs.filter(r => r.status === "confirmed");
+          const waitlist = regs.filter(r => r.status === "waitlist");
           output.push({
-            ...s,
+            ...s, archived: isArchived(s, now()),
             myStatus: mine?.status || null,
-            confirmed: regs
-              .filter((r) => r.status === "confirmed")
-              .map((r) => ({ name: r.name })),
-            waitlist: regs
-              .filter((r) => r.status === "waitlist")
-              .map((r) => ({ name: r.name })),
-            confirmedCount: regs.filter((r) => r.status === "confirmed").length,
-            waitlistCount: regs.filter((r) => r.status === "waitlist").length,
+            confirmed: confirmed.map(r => ({ name: r.name })),
+            waitlist: waitlist.map(r => ({ name: r.name })),
+            confirmedCount: confirmed.length,
+            waitlistCount: waitlist.length,
+            ...(admin ? { attendedCount: confirmed.filter(r => r.attended === true).length } : {}),
           });
         }
         return json({ sessions: output });
       }
       if (action === "create" || action === "update") {
         if (!adminOK(body))
-          return json({ error: "Incorrect organizer password." }, 403);
+          return json({ error: "Incorrect admin password." }, 403);
         const date = clean(body.date),
           start = clean(body.start),
           end = clean(body.end),
@@ -156,7 +173,7 @@ export function createAPI({ read, save, all }) {
       }
       if (action === "delete") {
         if (!adminOK(body))
-          return json({ error: "Incorrect organizer password." }, 403);
+          return json({ error: "Incorrect admin password." }, 403);
         const s = await read(sessionKey(clean(body.sessionId)), null);
         if (!s) return json({ error: "Game not found." }, 404);
         s.status = "deleted";
@@ -165,17 +182,18 @@ export function createAPI({ read, save, all }) {
         return json({ ok: true });
       }
       if (action === "adminRoster") {
-        if (!adminOK(body)) return json({ error: "Incorrect organizer password." }, 403);
+        if (!adminOK(body)) return json({ error: "Incorrect admin password." }, 403);
         const id = clean(body.sessionId);
         const session = await read(sessionKey(id), null);
         if (!session || session.status === "deleted") return json({ error: "Game not found." }, 404);
         const players = (await roster(id)).map((r) => ({
           playerId: r.playerId, name: r.name, status: r.status,
+          attended: r.attended === true,
         }));
         return json({ players });
       }
       if (action === "adminEditPlayer" || action === "adminRemovePlayer") {
-        if (!adminOK(body)) return json({ error: "Incorrect organizer password." }, 403);
+        if (!adminOK(body)) return json({ error: "Incorrect admin password." }, 403);
         const id = clean(body.sessionId), playerId = clean(body.playerId);
         const session = await read(sessionKey(id), null);
         if (!session || session.status === "deleted") return json({ error: "Game not found." }, 404);
@@ -198,6 +216,21 @@ export function createAPI({ read, save, all }) {
         }
         return json({ ok: true });
       }
+      if (action === "adminAttendance") {
+        if (!adminOK(body)) return json({ error: "Incorrect admin password." }, 403);
+        const id = clean(body.sessionId), playerId = clean(body.playerId);
+        const session = await read(sessionKey(id), null);
+        if (!session || session.status === "deleted") return json({ error: "Game not found." }, 404);
+        const key = registrationKey(id, playerId);
+        const r = await read(key, null);
+        if (!r || r.status !== "confirmed") return json({ error: "Confirmed player not found." }, 404);
+        if (typeof body.attended !== "boolean") return json({ error: "Attendance must be true or false." }, 400);
+        r.attended = body.attended;
+        r.attendanceUpdatedAt = new Date().toISOString();
+        await save(key, r);
+        await recordEvent("attendance_updated", "admin", { sessionId: id, playerId, attended: body.attended });
+        return json({ ok: true });
+      }
       if (action === "register") {
         const id = clean(body.sessionId),
           name = clean(body.name),
@@ -212,7 +245,7 @@ export function createAPI({ read, save, all }) {
         )
           return json({ error: "Name and player identity required." }, 400);
         const s = await read(sessionKey(id), null);
-        if (!s || s.status !== "open")
+        if (!s || s.status !== "open" || Date.now() >= gameEndTimestamp(s))
           return json({ error: "Game not available." }, 404);
         const key = registrationKey(id, playerId),
           existing = await read(key, null);
@@ -264,7 +297,7 @@ export function createAPI({ read, save, all }) {
       }
       if (action === "audit") {
         if (!adminOK(body))
-          return json({ error: "Incorrect organizer password." }, 403);
+          return json({ error: "Incorrect admin password." }, 403);
         const logs = (await all("audit/"))
           .sort((a, b) => b.at.localeCompare(a.at))
           .slice(0, 100);
