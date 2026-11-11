@@ -21,3 +21,6 @@ This project uses Netlify Blobs to store **JSON objects** for games, registratio
 ## Local tests
 
 `npm test` tests the game/registration business rules using an in-memory fixture. It does not exercise live Netlify Blobs.
+
+## Organizer player management
+In Organizer tools > Manage scheduled games, click **Manage players** under a game. The organizer can change a registered player's display name, or remove them from that game. Removing a confirmed player promotes the next waitlisted player. These actions require SOCCER_ADMIN_SECRET and do not reveal player device secrets. Changes persist in the site's Netlify Blobs storage. Note that Netlify Blobs does not provide transactions; simultaneous requests can race.

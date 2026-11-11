@@ -216,3 +216,28 @@ test("cancellation immediately promotes the first waiting player", async (t) => 
   assert.equal(game.confirmedCount, 2);
   assert.equal(game.waitlistCount, 0);
 });
+
+test("organizer can edit and remove a player while keeping device authentication private", async (t) => {
+  const original = process.env.SOCCER_ADMIN_SECRET;
+  const adminSecret = randomUUID();
+  process.env.SOCCER_ADMIN_SECRET = adminSecret;
+  t.after(() => { if (original === undefined) delete process.env.SOCCER_ADMIN_SECRET; else process.env.SOCCER_ADMIN_SECRET = original; });
+  const call = fixture();
+  await call({action:"create",adminSecret,date:"2099-02-01",start:"18:00",end:"19:00",location:"Gym",capacity:2});
+  const sessionId = (await call()).sessions[0].id;
+  const players = Array.from({length:3},(_,i)=>({playerId:randomUUID(),playerSecret:randomUUID(),name:"Player "+i}));
+  for (const p of players) assert.equal((await call({action:"register",sessionId,...p})).ok,true);
+  assert.equal((await call({action:"adminRoster",sessionId,adminSecret:"invalid"})).status,403);
+  let res = await call({action:"adminRoster",sessionId,adminSecret});
+  assert.equal(res.players.length,3);
+  assert.ok(!JSON.stringify(res).includes("secretHash"));
+  assert.ok(!JSON.stringify(res).includes(players[0].playerSecret));
+  assert.equal((await call({action:"adminEditPlayer",sessionId,adminSecret,playerId:players[0].playerId,name:"Renamed Player"})).ok,true);
+  res = await call({action:"adminRoster",sessionId,adminSecret});
+  assert.equal(res.players.find(p=>p.playerId===players[0].playerId).name,"Renamed Player");
+  assert.equal((await call({action:"adminRemovePlayer",sessionId,adminSecret,playerId:players[0].playerId})).ok,true);
+  res = await call({action:"adminRoster",sessionId,adminSecret});
+  assert.equal(res.players.length,2);
+  assert.equal(res.players.filter(p=>p.status==="confirmed").length,2);
+  assert.equal((await call({action:"adminRemovePlayer",sessionId,adminSecret,playerId:players[0].playerId})).status,404);
+});

@@ -164,6 +164,40 @@ export function createAPI({ read, save, all }) {
         await recordEvent("deleted", "organizer", { sessionId: s.id });
         return json({ ok: true });
       }
+      if (action === "adminRoster") {
+        if (!adminOK(body)) return json({ error: "Incorrect organizer password." }, 403);
+        const id = clean(body.sessionId);
+        const session = await read(sessionKey(id), null);
+        if (!session || session.status === "deleted") return json({ error: "Game not found." }, 404);
+        const players = (await roster(id)).map((r) => ({
+          playerId: r.playerId, name: r.name, status: r.status,
+        }));
+        return json({ players });
+      }
+      if (action === "adminEditPlayer" || action === "adminRemovePlayer") {
+        if (!adminOK(body)) return json({ error: "Incorrect organizer password." }, 403);
+        const id = clean(body.sessionId), playerId = clean(body.playerId);
+        const session = await read(sessionKey(id), null);
+        if (!session || session.status === "deleted") return json({ error: "Game not found." }, 404);
+        const key = registrationKey(id, playerId);
+        const r = await read(key, null);
+        if (!r || !active(r)) return json({ error: "Active player not found." }, 404);
+        if (action === "adminEditPlayer") {
+          const name = clean(body.name);
+          if (name.length < 2) return json({ error: "Player name must have at least two characters." }, 400);
+          r.name = name;
+          r.updatedAt = new Date().toISOString();
+          await save(key, r);
+          await recordEvent("player_edited", "organizer", { sessionId: id, playerId });
+        } else {
+          r.status = "removed";
+          r.updatedAt = new Date().toISOString();
+          await save(key, r);
+          await recordEvent("player_removed", "organizer", { sessionId: id, playerId });
+          await promote(id);
+        }
+        return json({ ok: true });
+      }
       if (action === "register") {
         const id = clean(body.sessionId),
           name = clean(body.name),

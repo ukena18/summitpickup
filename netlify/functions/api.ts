@@ -19,7 +19,7 @@ export default async function handler(request: Request) {
     return respond({ error: "Invalid request." }, 400);
 
   // Check organizer authorization before touching storage.
-  if (["login", "create", "update", "delete", "audit"].includes(String(body.action))) {
+  if (["login", "create", "update", "delete", "audit", "adminRoster", "adminEditPlayer", "adminRemovePlayer"].includes(String(body.action))) {
     if (!organizerAuthorized(body))
       return respond({ error: "Incorrect organizer secret key." }, 403);
     if (body.action === "login") return respond({ ok: true });
