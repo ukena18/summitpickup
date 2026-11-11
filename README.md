@@ -1,11 +1,23 @@
-# Summit Pickup Soccer
+# Summit County Pickup — JSON-backed Netlify edition
 
-A pickup soccer calendar with name-based registration and organizer tools on Netlify.
+This project uses Netlify Blobs to store **JSON objects** for games, registrations, waiting lists and organizer audit records. No Postgres or Netlify Database is required.
 
-Choose a scheduled date or game to open registration and enter a display name. The server confirms a spot or adds the player to the waitlist when full. Player counts refresh after changes and every 15 seconds while the page is visible. A player's cancellation identity stays in their browser; clearing browser data removes that access.
+## Deploy to the NEW Netlify account/project
 
-Organizer tools require the existing `SOCCER_ADMIN_SECRET` before opening. The key is checked on the server for every organizer action and stays only in the page's memory until the tools are locked or the page is closed. Organizers can publish, edit, and remove games and view the activity log. Editing preserves registrations; capacity cannot drop below the confirmed count. Increasing capacity or cancelling a spot promotes waiting players in signup order.
+1. Upload/push **this complete extracted project folder** to the repository connected to your new Netlify project, or link this folder using the Netlify CLI.
+2. Build: `npm run build`; publish: `public`; functions: `netlify/functions` (already configured in `netlify.toml`).
+3. In the **new** site's Environment variables, set `SOCCER_ADMIN_SECRET` to a long, private secret. Do not put it in source control.
+4. Deploy. The API uses Netlify Blobs and creates records on demand; there is no database setup step.
+5. Check the page, create a test game, register and cancel a test player, and verify persistence after a refresh.
 
-The static frontend is published from `public`, with its API in `netlify/functions/api.ts`. Structured game, registration, and audit records use Netlify Database with Drizzle. The schema is in `db/schema.ts`; deployment applies the generated migrations in `netlify/database/migrations`. The first schedule request imports the existing site's Blobs records into the database once, transactionally, without changing the original blobs. Database transactions serialize changes to prevent overbooking.
+## Important limitations
 
-Run `node --test tests/api.test.mjs` for API behavior checks. Netlify handles deployment and database migration application.
+- Static JSON files included in `public/` are read-only at runtime. Netlify Blobs stores JSON records persistently across deploys and server restarts.
+- This storage is suitable for small, low-traffic pickup games, but it does **not** provide database transactions or guaranteed capacity limits under concurrent signups. Two people registering at precisely the same moment may overbook. If strict capacity/waitlist accuracy is essential, use a transactional backend.
+- The records belong to a **Netlify site**, not your local ZIP. Deploying to a new Netlify account/project starts with empty game and registration data; old-site Blobs do **not** transfer automatically.
+- Blobs are shared across deploy previews and production on the same site. Do not submit real/test registrations on a preview if you need isolated production data.
+- To inspect your records, use Netlify dashboard **Data & Storage → Blobs**, store `summit-soccer-data`.
+
+## Local tests
+
+`npm test` tests the game/registration business rules using an in-memory fixture. It does not exercise live Netlify Blobs.

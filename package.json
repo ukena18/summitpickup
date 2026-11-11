@@ -1,1 +1,12 @@
-{"name":"summit-soccer-netlify","version":"2.0.0","type":"module","scripts":{"build":"node -e \"console.log('Static site ready')\""},"dependencies":{"@netlify/blobs":"^9.0.0","@netlify/database":"^2.0.3","drizzle-orm":"^1.0.0-beta.22"},"devDependencies":{"drizzle-kit":"^1.0.0-beta.22"}}
+{
+  "name": "summit-soccer-netlify",
+  "version": "2.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "node -e \"console.log('Static site ready')\"",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@netlify/blobs": "^9.0.0"
+  }
+}
